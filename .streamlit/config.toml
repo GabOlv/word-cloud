@@ -1,0 +1,10 @@
+[client]
+showSidebarNavigation = false
+
+[theme]
+base = "light"
+
+[server]
+headless = true
+
+
