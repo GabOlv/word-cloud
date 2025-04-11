@@ -173,6 +173,7 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-
+data_temp
 wordcloud.db
 respostas.csv
+test.py

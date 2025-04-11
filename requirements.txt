@@ -1,0 +1,6 @@
+streamlit
+wordcloud
+pyspellchecker
+unidecode
+webview
+pyinstaller
