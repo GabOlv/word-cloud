@@ -59,7 +59,7 @@ The CSV file used was exported from **Google Forms**.
 No terminal, dentro da **pasta raiz** do projeto, execute:
 
 ```bash
-pyinstaller setup.spec
+pyinstaller --onefile --console --name "NuvemDePalavras" --icon "nuvem\pages\assets\app.ico" --additional-hooks-dir hooks --add-data "nuvem;nuvem" --add-data ".streamlit;.streamlit" nuvem\main_exe.py
 ```
 
 Um novo diretório **`/dist`** será criado com o arquivo `.exe` compilado.
