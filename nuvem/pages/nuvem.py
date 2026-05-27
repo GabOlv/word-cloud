@@ -359,13 +359,31 @@ def construir_perfil_processamento(textos):
     stopwords = set(STOPWORDS_GERAIS)
     baixo_valor = set(PALAVRAS_BAIXO_VALOR)
     termos_curto = set(TERMOS_CURTOS_PERMITIDOS)
+    temas_ativos = []
 
     if tema:
-        termos |= tema["terms"] | tema["protected_terms"]
-        correcoes.update(tema["corrections"])
+        melhor_score = pontuacoes[0]["score"] if pontuacoes else 0
+        if confianca < 60:
+            temas_ativos = [
+                item["theme"]
+                for item in pontuacoes
+                if item["raw_score"] > 0 and item["score"] >= melhor_score * 0.35
+            ]
+        else:
+            temas_ativos = [tema]
 
-        if tema["id"] == "tecnologia":
+        for tema_ativo in temas_ativos:
+            termos |= tema_ativo["terms"] | tema_ativo["protected_terms"]
+            correcoes.update(tema_ativo["corrections"])
+
+        if any(tema_ativo["id"] == "tecnologia" for tema_ativo in temas_ativos):
             termos |= PALAVRAS_TECNICAS_LEGADO
+
+    nome_tema = "Generico"
+    if len(temas_ativos) == 1:
+        nome_tema = temas_ativos[0]["name"]
+    elif len(temas_ativos) > 1:
+        nome_tema = "Diversos: " + ", ".join(tema_ativo["name"] for tema_ativo in temas_ativos)
 
     vocabulario_canonico = {termo: termo for termo in termos if " " not in termo}
     vocabulario_composto = {termo: termo for termo in termos if " " in termo}
@@ -374,6 +392,8 @@ def construir_perfil_processamento(textos):
 
     return {
         "tema": tema,
+        "tema_nome": nome_tema,
+        "temas_ativos": temas_ativos,
         "tema_confianca": confianca,
         "tema_pontuacoes": pontuacoes,
         "stopwords": stopwords,
@@ -513,7 +533,7 @@ def processar_csv(file_content):
         {"Palavra": frequencias.index, "Frequencia": frequencias.values}
     )
     tema_info = {
-        "nome": perfil["tema"]["name"] if perfil["tema"] else "Generico",
+        "nome": perfil["tema_nome"],
         "confianca": perfil["tema_confianca"],
     }
     return frequencias.to_dict(), freq_df, tema_info
