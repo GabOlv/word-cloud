@@ -232,6 +232,10 @@ STOPWORDS_GERAIS = (
     carregar_lista_texto("language/stopwords_pt.txt")
     | carregar_lista_texto("language/stopwords_en.txt")
 )
+PALAVRAS_BAIXO_VALOR = (
+    carregar_lista_texto("language/low_value_words_pt.txt")
+    | carregar_lista_texto("language/low_value_words_en.txt")
+)
 CORRECOES_GERAIS = normalizar_mapa(
     carregar_json("language/common_corrections.json", {})
 )
@@ -247,6 +251,8 @@ def singularizar(palavra):
     palavra_lower = palavra
     if palavra_lower in EXCECOES_SINGULAR:
         return EXCECOES_SINGULAR[palavra_lower]
+    if palavra_lower in {"frances", "ingles", "portugues", "simples"}:
+        return palavra_lower
     if palavra_lower.endswith(("ões", "ães", "ãos")):
         return palavra_lower[:-3] + "ão"
     if palavra_lower.endswith("ns"):
@@ -263,6 +269,8 @@ def singularizar(palavra):
         return palavra_lower[:-2]
     if palavra_lower.endswith("zes") and len(palavra_lower) > 3:
         return palavra_lower[:-2]
+    if palavra_lower.endswith(("gues", "ques")) and len(palavra_lower) > 5:
+        return palavra_lower
     if palavra_lower.endswith("s") and len(palavra_lower) > 1:
         return palavra_lower[:-1]
     return palavra_lower
@@ -293,30 +301,53 @@ def tokenizar_textos(textos):
     return tokens
 
 
+def contar_termos_compostos(tokens, termos):
+    if not tokens:
+        return 0
+
+    texto_normalizado = " ".join(tokens)
+    total = 0
+    for termo in termos:
+        if " " in termo:
+            total += len(re.findall(rf"(?<!\w){re.escape(termo)}(?!\w)", texto_normalizado))
+    return total
+
+
 def detectar_tema(textos):
     tokens = tokenizar_textos(textos)
-    token_set = set(tokens)
-    texto_normalizado = " ".join(tokens)
+    tokens_relevantes = [
+        token
+        for token in tokens
+        if token not in STOPWORDS_GERAIS and token not in PALAVRAS_BAIXO_VALOR
+    ]
+    contagem_tokens = pd.Series(tokens_relevantes).value_counts().to_dict()
     pontuacoes = []
 
     for tema in TEMAS:
-        score = 0
-        for termo in tema["terms"] | set(tema["corrections"].values()):
-            if " " in termo:
-                if termo in texto_normalizado:
-                    score += 3
-            elif termo in token_set:
-                score += 1
+        termos_tema = tema["terms"] | tema["protected_terms"] | set(tema["corrections"].values())
+        score_bruto = 0
 
-        pontuacoes.append({"theme": tema, "score": score})
+        for termo in termos_tema:
+            if " " in termo:
+                score_bruto += contar_termos_compostos(tokens, {termo}) * 4
+            else:
+                score_bruto += min(contagem_tokens.get(termo, 0), 8)
+
+        # Larger theme packs should not win just because they contain more terms.
+        normalizador = max(len(termos_tema) ** 0.35, 1)
+        score = score_bruto / normalizador
+        pontuacoes.append({"theme": tema, "score": score, "raw_score": score_bruto})
 
     pontuacoes.sort(key=lambda item: item["score"], reverse=True)
     melhor = pontuacoes[0] if pontuacoes else None
-    total = sum(item["score"] for item in pontuacoes) or 1
-    confianca = int(round((melhor["score"] / total) * 100)) if melhor else 0
 
-    if not melhor or melhor["score"] == 0:
+    if not melhor or melhor["raw_score"] == 0:
         return None, pontuacoes, 0
+
+    segundo = pontuacoes[1] if len(pontuacoes) > 1 else {"score": 0}
+    confianca = int(
+        round(min(95, max(35, (melhor["score"] / (melhor["score"] + segundo["score"] + 0.01)) * 100)))
+    )
 
     return melhor["theme"], pontuacoes, confianca
 
@@ -326,6 +357,7 @@ def construir_perfil_processamento(textos):
     termos = set(TERMOS_PROTEGIDOS_GERAIS)
     correcoes = dict(CORRECOES_GERAIS)
     stopwords = set(STOPWORDS_GERAIS)
+    baixo_valor = set(PALAVRAS_BAIXO_VALOR)
     termos_curto = set(TERMOS_CURTOS_PERMITIDOS)
 
     if tema:
@@ -337,13 +369,18 @@ def construir_perfil_processamento(textos):
 
     vocabulario_canonico = {termo: termo for termo in termos if " " not in termo}
     vocabulario_composto = {termo: termo for termo in termos if " " in termo}
+    correcoes_simples = {chave: valor for chave, valor in correcoes.items() if " " not in chave}
+    correcoes_compostas = {chave: valor for chave, valor in correcoes.items() if " " in chave}
 
     return {
         "tema": tema,
         "tema_confianca": confianca,
         "tema_pontuacoes": pontuacoes,
         "stopwords": stopwords,
+        "baixo_valor": baixo_valor,
         "correcoes": correcoes,
+        "correcoes_simples": correcoes_simples,
+        "correcoes_compostas": correcoes_compostas,
         "termos_curto": termos_curto,
         "termos": termos,
         "vocabulario_canonico": vocabulario_canonico,
@@ -353,11 +390,11 @@ def construir_perfil_processamento(textos):
 
 
 def corrigir_alias_comum(palavra, perfil):
-    return perfil["correcoes"].get(palavra, palavra)
+    return perfil["correcoes_simples"].get(palavra, palavra)
 
 
 def palavra_relevante(palavra, perfil):
-    return palavra and palavra not in perfil["stopwords"] and (
+    return palavra and palavra not in perfil["stopwords"] and palavra not in perfil["baixo_valor"] and (
         len(palavra) > 2 or palavra in perfil["termos_curto"]
     )
 
@@ -368,7 +405,7 @@ def conhecida_no_corretor(spell, palavra):
 
 def corrigir_palavra(palavra, perfil, spell_pt=None, spell_en=None):
     palavra = corrigir_alias_comum(palavra, perfil)
-    if palavra in perfil["stopwords"]:
+    if palavra in perfil["stopwords"] or palavra in perfil["baixo_valor"]:
         return palavra
     corrigida = corrigir_com_vocabulario(palavra, perfil)
     if corrigida != palavra or palavra in perfil["termos"]:
@@ -387,7 +424,7 @@ def corrigir_palavra(palavra, perfil, spell_pt=None, spell_en=None):
     return singularizar(palavra)
 
 
-def combinar_termos_compostos(palavras, perfil):
+def combinar_termos_compostos(palavras, perfil, spell_pt=None, spell_en=None):
     termos = []
     index = 0
     max_partes = 4
@@ -398,6 +435,10 @@ def combinar_termos_compostos(palavras, perfil):
 
         for tamanho in range(min(max_partes, len(palavras) - index), 1, -1):
             candidato = " ".join(palavras[index : index + tamanho])
+            if candidato in perfil["correcoes_compostas"]:
+                termo_composto = perfil["correcoes_compostas"][candidato]
+                tamanho_composto = tamanho
+                break
             if candidato in perfil["vocabulario_composto"]:
                 termo_composto = perfil["vocabulario_composto"][candidato]
                 tamanho_composto = tamanho
@@ -407,7 +448,7 @@ def combinar_termos_compostos(palavras, perfil):
             termos.append(termo_composto)
             index += tamanho_composto
         else:
-            palavra = palavras[index]
+            palavra = corrigir_palavra(palavras[index], perfil, spell_pt, spell_en)
             if palavra_relevante(palavra, perfil):
                 termos.append(palavra)
             index += 1
@@ -421,8 +462,8 @@ def extrair_termos(texto, perfil, spell_pt=None, spell_en=None):
         normalizada = normalizar_palavra(palavra_original)
         if not normalizada:
             continue
-        palavras.append(corrigir_palavra(normalizada, perfil, spell_pt, spell_en))
-    return combinar_termos_compostos(palavras, perfil)
+        palavras.append(normalizada)
+    return combinar_termos_compostos(palavras, perfil, spell_pt, spell_en)
 
 
 @st.cache_data  # Cache the processing result
@@ -537,11 +578,6 @@ else:
         # --- Display Word Cloud ---
         frequencias = st.session_state.frequencias
         st.subheader("Nuvem Gerada")
-        if st.session_state.tema_info:
-            st.caption(
-                f"Tema sugerido: {st.session_state.tema_info['nome']} "
-                f"({st.session_state.tema_info['confianca']}% de confianca)"
-            )
         try:
             font_path = resource_path("Poppins-Light.ttf")
             mask_path = resource_path("nuvem.png")
