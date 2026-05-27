@@ -1,0 +1,33 @@
+{
+  "name": "Trabalho",
+  "terms": [
+    "carreira",
+    "chefe",
+    "cliente",
+    "colaborador",
+    "curriculo",
+    "dinheiro",
+    "emprego",
+    "empresa",
+    "equipe",
+    "funcionario",
+    "gestao",
+    "home office",
+    "mercado",
+    "negocio",
+    "profissao",
+    "projeto",
+    "reuniao",
+    "salario",
+    "trabalho",
+    "vaga"
+  ],
+  "corrections": {
+    "enprego": "emprego",
+    "proficcao": "profissao",
+    "trabalio": "trabalho"
+  },
+  "protected_terms": [
+    "home office"
+  ]
+}

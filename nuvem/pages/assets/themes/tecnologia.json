@@ -1,0 +1,44 @@
+{
+  "name": "Tecnologia",
+  "terms": [
+    "algoritmo",
+    "aplicativo",
+    "app",
+    "celular",
+    "cloud",
+    "computador",
+    "dados",
+    "game",
+    "github",
+    "hardware",
+    "ia",
+    "internet",
+    "inteligencia artificial",
+    "jogo",
+    "notebook",
+    "programacao",
+    "python",
+    "rede",
+    "robo",
+    "robotica",
+    "software",
+    "tecnologia",
+    "whatsapp",
+    "youtube"
+  ],
+  "corrections": {
+    "conputador": "computador",
+    "piton": "python",
+    "phyton": "python",
+    "pythn": "python",
+    "pythom": "python",
+    "pyton": "python"
+  },
+  "protected_terms": [
+    "c#",
+    "c++",
+    "go",
+    "java",
+    "python"
+  ]
+}

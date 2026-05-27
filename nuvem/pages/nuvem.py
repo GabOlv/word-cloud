@@ -5,13 +5,14 @@ import sys
 import matplotlib.pyplot as plt
 import numpy as np
 import random
-from PIL import Image, ImageOps
+from PIL import Image
 from wordcloud import WordCloud
 from spellchecker import SpellChecker
 import unicodedata
 import re
 import json
 import io
+from difflib import get_close_matches
 
 
 # --- Asset Path Function ---
@@ -50,6 +51,36 @@ def resource_path(relative_path):
 st.set_page_config(page_title="Nuvem de Palavras", layout="centered", page_icon="☁️")
 
 
+# --- Text Processing Functions ---
+def remover_acentos(texto):
+    texto = str(texto).lower()
+    return "".join(
+        c
+        for c in unicodedata.normalize("NFD", texto)
+        if unicodedata.category(c) != "Mn"
+    )
+
+
+def normalizar_palavra(palavra):
+    palavra = remover_acentos(palavra)
+    palavra = re.sub(r"[^a-zA-Z0-9+#\s-]", "", palavra)
+    palavra = re.sub(r"\s+", " ", palavra)
+    return palavra.strip()
+
+
+def capitalizar(palavra):
+    palavras_minusculas = {"a", "as", "com", "da", "das", "de", "do", "dos", "e", "em", "o", "os"}
+    partes = []
+    for index, parte in enumerate(palavra.split()):
+        if index > 0 and parte in palavras_minusculas:
+            partes.append(parte)
+        elif parte in {"ai", "api", "cpu", "db", "dns", "gpu", "hd", "ia", "ip", "lgpd", "ml", "pc", "pdf", "ram", "ssd", "ui", "url", "ux", "vpn"}:
+            partes.append(parte.upper())
+        else:
+            partes.append(parte.capitalize())
+    return " ".join(partes)
+
+
 # --- Load Assets with Error Handling ---
 # @st.cache_resource # Cache resource loading
 def carregar_palavras_tecnicas():
@@ -57,27 +88,31 @@ def carregar_palavras_tecnicas():
     try:
         path = resource_path("words.txt")
         if not os.path.exists(path):
-            st.error(f"Arquivo de palavras tecnicas nao encontrado em: {path}")
-        else:
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()
-                # Safer alternative to eval if format is simple list/set string
-                try:
-                    palavras = set(
-                        json.loads(content.replace("'", '"'))
-                    )  # Try JSON first
-                except json.JSONDecodeError:
-                    try:
-                        palavras = set(eval(content))  # Fallback to eval if necessary
-                    except Exception as eval_e:
-                        st.error(
-                            f"Erro critico ao processar 'words.txt' com eval: {eval_e}"
-                        )
+            st.warning(f"Arquivo de palavras tecnicas nao encontrado em: {path}")
+            return palavras
+
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        try:
+            palavras_raw = json.loads(content)
+        except json.JSONDecodeError:
+            # words.txt is currently a Python-like list with comments/trailing commas.
+            # Extract quoted terms instead of using eval so a typo in the asset cannot execute code.
+            palavras_raw = [
+                match.group(1) or match.group(2)
+                for match in re.finditer(r'"([^"]+)"|\'([^\']+)\'', content)
+            ]
+
+        for palavra in palavras_raw:
+            normalizada = normalizar_palavra(palavra)
+            if normalizada:
+                palavras.add(normalizada)
 
     except FileNotFoundError:
-        st.error(f"Arquivo de palavras tecnicas 'words.txt' nao encontrado.")
+        st.warning("Arquivo de palavras tecnicas 'words.txt' nao encontrado.")
     except Exception as e:
-        st.error(f"Erro inesperado ao carregar palavras tecnicas (words.txt): {e}")
+        st.warning(f"Erro inesperado ao carregar palavras tecnicas (words.txt): {e}")
     return palavras
 
 
@@ -90,7 +125,12 @@ def carregar_excecoes_singular():
             st.error(f"Arquivo de excecoes nao encontrado em: {path}")
         else:
             with open(path, "r", encoding="utf-8") as f:
-                excecoes = json.load(f)
+                excecoes_raw = json.load(f)
+                excecoes = {
+                    normalizar_palavra(plural): normalizar_palavra(singular)
+                    for plural, singular in excecoes_raw.items()
+                    if normalizar_palavra(plural) and normalizar_palavra(singular)
+                }
     except FileNotFoundError:
         st.error(
             f"Arquivo de excecoes 'excecoes_singular.json' nao encontrado."
@@ -102,21 +142,102 @@ def carregar_excecoes_singular():
     return excecoes
 
 
+def carregar_lista_texto(relative_path):
+    itens = set()
+    path = resource_path(relative_path)
+    if not os.path.exists(path):
+        st.warning(f"Arquivo de lista nao encontrado: {path}")
+        return itens
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                item = line.strip()
+                if item and not item.startswith("#"):
+                    itens.add(normalizar_palavra(item))
+    except Exception as e:
+        st.warning(f"Erro ao carregar lista '{relative_path}': {e}")
+
+    return {item for item in itens if item}
+
+
+def carregar_json(relative_path, default):
+    path = resource_path(relative_path)
+    if not os.path.exists(path):
+        st.warning(f"Arquivo JSON nao encontrado: {path}")
+        return default
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except json.JSONDecodeError as e:
+        st.warning(f"Erro ao decodificar JSON '{relative_path}': {e}")
+    except Exception as e:
+        st.warning(f"Erro ao carregar JSON '{relative_path}': {e}")
+
+    return default
+
+
+def normalizar_mapa(mapa):
+    return {
+        normalizar_palavra(chave): normalizar_palavra(valor)
+        for chave, valor in mapa.items()
+        if normalizar_palavra(chave) and normalizar_palavra(valor)
+    }
+
+
+def normalizar_lista(itens):
+    return {normalizar_palavra(item) for item in itens if normalizar_palavra(item)}
+
+
+def carregar_temas():
+    temas_dir = resource_path("themes")
+    temas = []
+
+    if not os.path.isdir(temas_dir):
+        st.warning(f"Diretorio de temas nao encontrado: {temas_dir}")
+        return temas
+
+    for filename in sorted(os.listdir(temas_dir)):
+        if not filename.endswith(".json"):
+            continue
+
+        relative_path = os.path.join("themes", filename)
+        dados = carregar_json(relative_path, {})
+        if not dados:
+            continue
+
+        termos = normalizar_lista(dados.get("terms", []))
+        correcoes = normalizar_mapa(dados.get("corrections", {}))
+        protegidos = normalizar_lista(dados.get("protected_terms", []))
+        nome = dados.get("name") or os.path.splitext(filename)[0].title()
+
+        temas.append(
+            {
+                "id": os.path.splitext(filename)[0],
+                "name": nome,
+                "terms": termos,
+                "corrections": correcoes,
+                "protected_terms": protegidos,
+            }
+        )
+
+    return temas
+
+
 # --- Load Data --- Can be upgraded and have more items added
-PALAVRAS_TECNICAS = carregar_palavras_tecnicas()
+PALAVRAS_TECNICAS_LEGADO = carregar_palavras_tecnicas()
 EXCECOES_SINGULAR = carregar_excecoes_singular()
-
-
-# --- Text Processing Functions ---
-def normalizar_palavra(palavra):
-    palavra = str(palavra).lower()
-    palavra = "".join(
-        c
-        for c in unicodedata.normalize("NFD", palavra)
-        if unicodedata.category(c) != "Mn"
-    )
-    palavra = re.sub(r"[^a-zA-Z\s]", "", palavra)
-    return palavra.strip()
+STOPWORDS_GERAIS = (
+    carregar_lista_texto("language/stopwords_pt.txt")
+    | carregar_lista_texto("language/stopwords_en.txt")
+)
+CORRECOES_GERAIS = normalizar_mapa(
+    carregar_json("language/common_corrections.json", {})
+)
+TERMOS_CURTOS_PERMITIDOS = carregar_lista_texto("language/short_terms.txt")
+TERMOS_PROTEGIDOS_GERAIS = carregar_lista_texto("language/protected_terms.txt")
+TEMAS = carregar_temas()
 
 
 # handle plural to singular expressions
@@ -147,66 +268,214 @@ def singularizar(palavra):
     return palavra_lower
 
 
-def capitalizar(palavra):
-    return " ".join(w.capitalize() for w in palavra.split())
+def corrigir_com_vocabulario(palavra, perfil):
+    if not palavra or len(palavra) <= 2:
+        return palavra
+    if palavra in perfil["vocabulario_canonico"]:
+        return perfil["vocabulario_canonico"][palavra]
+
+    cutoff = 0.86 if len(palavra) <= 5 else 0.82
+    candidatos = get_close_matches(palavra, perfil["vocabulario_fuzzy"], n=1, cutoff=cutoff)
+    if candidatos:
+        return perfil["vocabulario_canonico"][candidatos[0]]
+
+    return palavra
 
 
 # --- CSV Processing ---
+def tokenizar_textos(textos):
+    tokens = []
+    for texto in textos:
+        for palavra_original in str(texto).split():
+            normalizada = normalizar_palavra(palavra_original)
+            if normalizada:
+                tokens.append(normalizada)
+    return tokens
+
+
+def detectar_tema(textos):
+    tokens = tokenizar_textos(textos)
+    token_set = set(tokens)
+    texto_normalizado = " ".join(tokens)
+    pontuacoes = []
+
+    for tema in TEMAS:
+        score = 0
+        for termo in tema["terms"] | set(tema["corrections"].values()):
+            if " " in termo:
+                if termo in texto_normalizado:
+                    score += 3
+            elif termo in token_set:
+                score += 1
+
+        pontuacoes.append({"theme": tema, "score": score})
+
+    pontuacoes.sort(key=lambda item: item["score"], reverse=True)
+    melhor = pontuacoes[0] if pontuacoes else None
+    total = sum(item["score"] for item in pontuacoes) or 1
+    confianca = int(round((melhor["score"] / total) * 100)) if melhor else 0
+
+    if not melhor or melhor["score"] == 0:
+        return None, pontuacoes, 0
+
+    return melhor["theme"], pontuacoes, confianca
+
+
+def construir_perfil_processamento(textos):
+    tema, pontuacoes, confianca = detectar_tema(textos)
+    termos = set(TERMOS_PROTEGIDOS_GERAIS)
+    correcoes = dict(CORRECOES_GERAIS)
+    stopwords = set(STOPWORDS_GERAIS)
+    termos_curto = set(TERMOS_CURTOS_PERMITIDOS)
+
+    if tema:
+        termos |= tema["terms"] | tema["protected_terms"]
+        correcoes.update(tema["corrections"])
+
+        if tema["id"] == "tecnologia":
+            termos |= PALAVRAS_TECNICAS_LEGADO
+
+    vocabulario_canonico = {termo: termo for termo in termos if " " not in termo}
+    vocabulario_composto = {termo: termo for termo in termos if " " in termo}
+
+    return {
+        "tema": tema,
+        "tema_confianca": confianca,
+        "tema_pontuacoes": pontuacoes,
+        "stopwords": stopwords,
+        "correcoes": correcoes,
+        "termos_curto": termos_curto,
+        "termos": termos,
+        "vocabulario_canonico": vocabulario_canonico,
+        "vocabulario_composto": vocabulario_composto,
+        "vocabulario_fuzzy": sorted(vocabulario_canonico),
+    }
+
+
+def corrigir_alias_comum(palavra, perfil):
+    return perfil["correcoes"].get(palavra, palavra)
+
+
+def palavra_relevante(palavra, perfil):
+    return palavra and palavra not in perfil["stopwords"] and (
+        len(palavra) > 2 or palavra in perfil["termos_curto"]
+    )
+
+
+def conhecida_no_corretor(spell, palavra):
+    return spell is not None and not spell.unknown([palavra])
+
+
+def corrigir_palavra(palavra, perfil, spell_pt=None, spell_en=None):
+    palavra = corrigir_alias_comum(palavra, perfil)
+    if palavra in perfil["stopwords"]:
+        return palavra
+    corrigida = corrigir_com_vocabulario(palavra, perfil)
+    if corrigida != palavra or palavra in perfil["termos"]:
+        return singularizar(corrigida)
+
+    if conhecida_no_corretor(spell_en, palavra) or conhecida_no_corretor(spell_pt, palavra):
+        return singularizar(palavra)
+
+    if spell_pt:
+        correcao = spell_pt.correction(palavra)
+        if correcao:
+            correcao = corrigir_alias_comum(normalizar_palavra(correcao), perfil)
+            correcao = corrigir_com_vocabulario(correcao, perfil)
+            return singularizar(correcao)
+
+    return singularizar(palavra)
+
+
+def combinar_termos_compostos(palavras, perfil):
+    termos = []
+    index = 0
+    max_partes = 4
+
+    while index < len(palavras):
+        termo_composto = None
+        tamanho_composto = 0
+
+        for tamanho in range(min(max_partes, len(palavras) - index), 1, -1):
+            candidato = " ".join(palavras[index : index + tamanho])
+            if candidato in perfil["vocabulario_composto"]:
+                termo_composto = perfil["vocabulario_composto"][candidato]
+                tamanho_composto = tamanho
+                break
+
+        if termo_composto:
+            termos.append(termo_composto)
+            index += tamanho_composto
+        else:
+            palavra = palavras[index]
+            if palavra_relevante(palavra, perfil):
+                termos.append(palavra)
+            index += 1
+
+    return termos
+
+
+def extrair_termos(texto, perfil, spell_pt=None, spell_en=None):
+    palavras = []
+    for palavra_original in str(texto).split():
+        normalizada = normalizar_palavra(palavra_original)
+        if not normalizada:
+            continue
+        palavras.append(corrigir_palavra(normalizada, perfil, spell_pt, spell_en))
+    return combinar_termos_compostos(palavras, perfil)
+
+
 @st.cache_data  # Cache the processing result
 def processar_csv(file_content):
     df = None
-    spell = None
+    spell_pt = None
+    spell_en = None
     try:
         df = pd.read_csv(io.BytesIO(file_content))
     except Exception as e:
         st.error(f"Erro ao ler o arquivo CSV: {e}")
-        return None, None
+        return None, None, None
 
     if df.shape[1] < 2:
         st.error("CSV invalido: precisa ter pelo menos duas colunas.")
-        return None, None
+        return None, None, None
+
+    segunda_coluna = df.iloc[:, 1]
+    perfil = construir_perfil_processamento(segunda_coluna)
 
     try:
-        spell = SpellChecker(language="pt")
-        if PALAVRAS_TECNICAS:
-            spell.word_frequency.load_words(PALAVRAS_TECNICAS)
+        spell_pt = SpellChecker(language="pt")
+        spell_en = SpellChecker(language="en")
+        if perfil["termos"]:
+            spell_pt.word_frequency.load_words(perfil["termos"])
+            spell_en.word_frequency.load_words(perfil["termos"])
     except Exception as e:
         # *** Use st.warning for non-critical errors like spellchecker init failure ***
         st.warning(
             f"Falha ao inicializar o corretor ortografico: {e}. Continuara sem correcao."
         )
-        spell = None
+        spell_pt = None
+        spell_en = None
 
-    palavras_corrigidas = []
-    segunda_coluna = df.iloc[:, 1]
+    termos_extraidos = []
 
     for texto in segunda_coluna:
-        texto_str = str(texto)
-        palavras_originais = texto_str.split()
-        palavras_processadas_texto = []
-        for palavra_original in palavras_originais:
-            normalizada = normalizar_palavra(palavra_original)
-            if not normalizada:
-                continue
-            corrigida = normalizada
-            if normalizada not in PALAVRAS_TECNICAS and spell:
-                correcao = spell.correction(normalizada)
-                corrigida = correcao if correcao else normalizada
-            singular = singularizar(corrigida)
-            palavras_processadas_texto.append(singular)
-        final = capitalizar(" ".join(p for p in palavras_processadas_texto if p))
-        palavras_corrigidas.append(final)
+        termos_extraidos.extend(extrair_termos(texto, perfil, spell_pt, spell_en))
 
-    palavras_validas = [p for p in palavras_corrigidas if p]
+    palavras_validas = [capitalizar(p) for p in termos_extraidos if p]
     if not palavras_validas:
         st.warning("Nenhuma palavra valida encontrada apos o processamento.")
-        return {}, None
+        return {}, None, None
 
     frequencias = pd.Series(palavras_validas).value_counts()
     freq_df = pd.DataFrame(
         {"Palavra": frequencias.index, "Frequencia": frequencias.values}
     )
-    return frequencias.to_dict(), freq_df
+    tema_info = {
+        "nome": perfil["tema"]["name"] if perfil["tema"] else "Generico",
+        "confianca": perfil["tema_confianca"],
+    }
+    return frequencias.to_dict(), freq_df, tema_info
 
 
 # --- Streamlit App Logic ---
@@ -217,6 +486,8 @@ if "frequencias" not in st.session_state:
     st.session_state.frequencias = None
 if "freq_df" not in st.session_state:
     st.session_state.freq_df = None
+if "tema_info" not in st.session_state:
+    st.session_state.tema_info = None
 if "error_message" not in st.session_state:
     st.session_state.error_message = None
 
@@ -234,11 +505,12 @@ if st.session_state.frequencias is None and st.session_state.error_message is No
     if uploaded_file is not None:
         with st.spinner("Processando CSV e gerando nuvem..."):
             file_content = uploaded_file.getvalue()
-            frequencias_calculadas, freq_df_calculado = processar_csv(file_content)
+            frequencias_calculadas, freq_df_calculado, tema_info = processar_csv(file_content)
 
             if frequencias_calculadas is not None:
                 st.session_state.frequencias = frequencias_calculadas
                 st.session_state.freq_df = freq_df_calculado
+                st.session_state.tema_info = tema_info
                 st.session_state.error_message = None
                 st.rerun()
             else:
@@ -248,6 +520,7 @@ if st.session_state.frequencias is None and st.session_state.error_message is No
                 )
                 st.session_state.frequencias = None
                 st.session_state.freq_df = None
+                st.session_state.tema_info = None
                 st.rerun()
 else:
     # --- Results / Error View ---
@@ -256,6 +529,7 @@ else:
         if st.button("Tentar novamente com outro arquivo"):
             st.session_state.frequencias = None
             st.session_state.freq_df = None
+            st.session_state.tema_info = None
             st.session_state.error_message = None
             st.experimental_rerun()  # Use newer rerun if available
 
@@ -263,6 +537,11 @@ else:
         # --- Display Word Cloud ---
         frequencias = st.session_state.frequencias
         st.subheader("Nuvem Gerada")
+        if st.session_state.tema_info:
+            st.caption(
+                f"Tema sugerido: {st.session_state.tema_info['nome']} "
+                f"({st.session_state.tema_info['confianca']}% de confianca)"
+            )
         try:
             font_path = resource_path("Poppins-Light.ttf")
             mask_path = resource_path("nuvem.png")

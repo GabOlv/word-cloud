@@ -1,0 +1,32 @@
+{
+  "name": "Educacao",
+  "terms": [
+    "aluno",
+    "aprendizado",
+    "aprender",
+    "aula",
+    "biblioteca",
+    "colegio",
+    "conhecimento",
+    "educacao",
+    "ensino",
+    "escola",
+    "estudar",
+    "estudo",
+    "faculdade",
+    "livro",
+    "nota",
+    "pesquisa",
+    "professor",
+    "prova",
+    "sala",
+    "tarefa",
+    "trabalho"
+  ],
+  "corrections": {
+    "educasao": "educacao",
+    "escola": "escola",
+    "profesor": "professor"
+  },
+  "protected_terms": []
+}

@@ -177,3 +177,4 @@ data_temp
 wordcloud.db
 respostas.csv
 test.py
+.test/

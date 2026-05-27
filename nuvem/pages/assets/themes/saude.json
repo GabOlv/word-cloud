@@ -1,0 +1,31 @@
+{
+  "name": "Saude",
+  "terms": [
+    "atividade fisica",
+    "bem estar",
+    "consulta",
+    "doenca",
+    "enfermeiro",
+    "exame",
+    "exercicio",
+    "hospital",
+    "medicamento",
+    "medicina",
+    "medico",
+    "mental",
+    "nutricao",
+    "paciente",
+    "remedio",
+    "saude",
+    "sintoma",
+    "tratamento",
+    "vacina",
+    "vida"
+  ],
+  "corrections": {
+    "medicoo": "medico",
+    "remedil": "remedio",
+    "saude": "saude"
+  },
+  "protected_terms": []
+}

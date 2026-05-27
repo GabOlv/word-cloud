@@ -1,0 +1,12 @@
+app
+apps
+internet
+online
+offline
+pdf
+site
+sites
+smartphone
+tablet
+video
+videos
